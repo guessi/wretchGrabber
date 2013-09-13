@@ -23,81 +23,90 @@ class wretchGrabber():
 		self.book_id = ''
 		self.user_id = ''
 		self.folder_name = ''
+		self.url_prefix = 'http://www.wretch.cc/album'
 		self.page_max = 1
-	
+
+	# restore all configurations
+	def resetDefault(self):
+		self.user_id = ''
+		self.book_id = ''
+		self.folder_name = ''
+		self.page_max = 1
+
 	# if the folder not exist, create it
-	def make_folder(self):
+	def makeFolder(self):
+		self.folder_name = "download/%s/album-%s" % (self.user_id, self.book_id)
 		if not os.path.exists(self.folder_name):
 			os.makedirs(self.folder_name)
 
 	# try to get the raw content from the given URL
-	def get_content(self, url):
+	def getContent(self, url):
 		req = urllib2.Request(url)
 		req.add_header("User-Agent", "Mozilla/5.0 (X11; U; Linux i686) Gecko/20071127 Firefox/2.0.0.11")
 		res = urllib2.urlopen(req)
 		return res.read()
 
 	# check if the given URL meet our expectation
-	def verify(self, url):
-		m1 = re.search("http:\/\/www.wretch.cc\/album\/album.php\?id=([a-zA-Z0-9]+)\&book=([\d]+)", url)
-		m2 = re.search("\&page=([\d]+)", url)
-		if m1:
-			self.user_id = m1.group(1)
-			self.book_id = m1.group(2)
-			self.folder_name = "%s/album-%s" % (self.user_id, self.book_id)
-			self.make_folder()
-			self.find_max()
+	def verifyURL(self, url):
+		match = re.search("http:\/\/www.wretch.cc\/album\/album.php\?id=([a-zA-Z0-9]+)\&book=([\d]+)", url)
+		if match:
+			self.user_id = match.group(1)
+			self.book_id = match.group(2)
+			self.makeFolder()
+			self.findMaxPage()
+		else:
+			self.resetDefault()
 
 	# try to find out all pages of the album and grab them all
-	def find_max(self):
-		url = "http://www.wretch.cc/album/album.php?id=" + self.user_id + "&book=" + self.book_id
-		raw = self.get_content(url)
+	def findMaxPage(self):
+		url = self.url_prefix + "/album.php?id=" + self.user_id + "&book=" + self.book_id
+		raw = self.getContent(url)
 		page = re.findall("\"\.\/album.php\?id=[a-zA-Z0-9]+\&book=[\d]+\&page=([\d]+)\"", raw)
 		if page:
 			self.page_max = max(page)
 		print("target album: %s" % url)
-		self.find_pages()
+		self.getAllPages()
 		print("all done")
 
 	# find out all photo links in the album
-	def find_pages(self):
+	def getAllPages(self):
 		print("total pages: %s" % self.page_max)
-		for i in range(1, int(self.page_max) + 1):
-			url = "http://www.wretch.cc/album/album.php?id=" + self.user_id + "&book=" + self.book_id + "&page=" + str(i)
-			print("current page: %s" % i)
-			raw = self.get_content(url)
+		for page_num in range(1, int(self.page_max) + 1):
+			url = self.url_prefix + "/album.php?id=" + self.user_id + "&book=" + self.book_id + "&page=" + str(page_num)
+			print("current page: %s" % page_num)
+			raw = self.getContent(url)
 			list = re.findall("src=.*\/thumbs\/t([\d]+).jpg\?", raw)
-			self.get_album(list)
+			self.getSinglePage(list)
 
 	# extract the picture ID list
-	def get_album(self, list):
+	def getSinglePage(self, list):
 		for image_id in list:
-			self.get_by_id(image_id)
+			self.getById(image_id)
 
 	# extract links from page source
-	def get_path(self, image_id):
-		raw = self.get_content("http://www.wretch.cc/album/show.php?i=" + self.user_id + "&b=" + self.book_id + "&f=" + image_id)
-		p1 = "<img.*class=\'displayimg\'.*src=\'(http:\/\/.*\.yimg\.com\/.*[\d\+\.jpg\?[a-zA-Z0-9]+)\'.*>"
-		p2 = "<img.*id=\'DisplayImage\'.*src=\'(http:\/\/.*\.yimg\.com\/.*[\d\+\.jpg\?[a-zA-Z0-9\-]+)\'.*>"
-		m1 = re.search(p1, raw)
-		m2 = re.search(p2, raw)
+	def getRealPath(self, image_id):
+		raw = self.getContent(self.url_prefix + "/show.php?i=" + self.user_id + "&b=" + self.book_id + "&f=" + image_id)
+		m1 = re.search("<img.*class=\'displayimg\'.*src=\'(http:\/\/.*\.yimg\.com\/.*[\d\+\.jpg\?[a-zA-Z0-9_\.\-]+)\'.*>", raw)
+		m2 = re.search("<img.*id=\'DisplayImage\'.*src=\'(http:\/\/.*\.yimg\.com\/.*[\d\+\.jpg\?[a-zA-Z0-9_\.\-]+)\'.*>", raw)
 		if m1:
 			return m1.group(1)
-		if m2:
+		elif m2:
 			return m2.group(1)
+		else:
+			return None
 
-	# pass photo link to get_image()
-	def get_by_id(self, image_id):
-		link = self.get_path(image_id)
+	# pass photo link to saveImage()
+	def getById(self, image_id):
+		link = self.getRealPath(image_id)
 		if link:
-			self.get_image(link, image_id)
+			self.saveImage(link, image_id)
 
 	# get photo back to client side
-	def get_image(self, img, id):
-		filename = "%s/%s.jpg" % (self.folder_name, id)
-		print("saving: %s.jpg ..." % id),
+	def saveImage(self, image, image_id):
+		filename = "%s/%s.jpg" % (self.folder_name, image_id)
+		print("saving: %s.jpg ..." % image_id),
 		file = open(filename, 'wb')
-		file.write(urllib2.urlopen(img).read())
+		file.write(urllib2.urlopen(image).read())
 		file.close()
 		print("done")
 
@@ -107,7 +116,7 @@ if __name__ == "__main__":
 			target = f.readline()
 		f.close()
 		instance = wretchGrabber()
-		instance.verify(target)
+		instance.verifyURL(target)
 	except:
 		print("abort")
 		pass
